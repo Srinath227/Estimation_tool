@@ -1,0 +1,326 @@
+
+Estimation_data1 
+
+
+
+
+
+import json
+import boto3  
+import uuid
+
+# dynamodb = boto3.resource('dynamodb')
+# counter_table_name = 'CounterTable' 
+# table1_name = 'Estimation_data' 
+
+
+# counter_table = dynamodb.Table(counter_table_name)
+# table1 = dynamodb.Table(table1_name)
+
+client_dynamodb = boto3.client('dynamodb')
+resource_dynamodb = boto3.resource('dynamodb')
+
+table = 'Estimation_data'
+counter_table_name='CounterTable'
+
+
+counter_table=resource_dynamodb.Table(counter_table_name)
+estimation_table=resource_dynamodb.Table(table)
+      
+# Fetch the existing value from the counter table
+# counter_response = counter_table.get_item(Key={'rfp_no': 100})
+# counter_data = counter_response.get('Item', {})
+# lastUpdated_rfp_value = counter_data.get('counter_value', None)
+def genPrimeKey(counter_table_name):
+
+    response = client_dynamodb.update_item(
+
+                        TableName= counter_table_name,
+
+                        Key={'rfp_no':{'N': '400'}}, #counter_value=200
+
+                        UpdateExpression='ADD counter_value:inc',
+
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+
+                        ReturnValues='UPDATED_NEW'
+
+                    )
+
+    # Get the incremented value
+
+    return response['Attributes']['counter_value']['N']
+
+def filterByRfp(table, lastUpdated_rfp_value):
+
+    scan_params = {
+
+          'TableName': table,
+
+          'FilterExpression': '#attribute_name = :attribute_value',
+
+          'ExpressionAttributeNames' : {
+
+                '#attribute_name' :'rfp_no'
+
+            },
+
+          'ExpressionAttributeValues': {
+
+              ':attribute_value': {'N': str(lastUpdated_rfp_value)}
+
+          }
+
+    }
+
+    
+
+    return client_dynamodb.scan(**scan_params)
+
+def postdata(event):
+    try:
+        # counter_response = counter_table.get_item(Key={'rfp_no': 100})
+        # counter_data = counter_response.get('Item', {})
+        # additional_column_value = counter_data.get('counter_value', None)
+        requestBody=json.loads(event['body'])
+        rfp= requestBody.get('RfpNum')
+        comp =requestBody.get('Components')
+        # auto_incremented_id_value= genPrimeKey(counter_table_name)
+        
+        response = estimation_table.scan(
+              FilterExpression='#attrName = :Componentvalue ',
+              ExpressionAttributeNames={
+                  '#attrName':'Components'
+              },
+              ExpressionAttributeValues={
+                  ':Componentvalue': comp,
+                #   ':subComponentvalue':subComp
+              }
+            )
+        for subComponent in requestBody.get('subComponents',[]):
+            auto_incremented_id_value= genPrimeKey(counter_table_name)
+            estimation_table.put_item(
+                Item={
+                    'Components':comp,    
+                    'subComponents':subComponent,
+                    'rfp_no':rfp,
+                    'id':int(auto_incremented_id_value)
+                    }
+                    
+             )  
+        return {
+                'statusCode': 200,
+                'body': json.dumps({"success":True}), 
+                'headers': {
+                    'ContentType': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Method':'*'
+                    }
+        }       
+    except Exception as e:
+        response = {
+          "statusCode": 500,
+          "body": json.dumps(str(e))
+        }
+    return response
+def getData(event,table):
+
+    try:
+
+        rfp=event["queryStringParameters"]["RfpNum"]
+
+        response= filterByRfp(table,rfp) 
+
+        items = response.get('Items', [])
+
+        sorted_items=sorted(items,key=lambda x: int(x['id']['N']))
+
+
+        
+
+        response3= { 
+
+          'statusCode': 200,
+
+          'body': json.dumps(sorted_items),
+
+          'headers': {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+                    } 
+
+            }
+
+    except Exception as e:
+
+        response3= { 
+
+          'statusCode': 500,
+
+          'body': json.dumps(str(e)),
+
+          'headers': {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+                    } 
+
+      }
+
+    return response3   
+
+def delete(event):
+    try:
+       http_method = event.get('httpMethod')  # Ensure retrieving the HTTP method correctly
+       if http_method == 'DELETE':
+           payload = json.loads(event['body'])
+           item_id = payload.get('id')
+           sort_key_value = payload.get('RfpNum')
+           response = estimation_table.scan(
+               FilterExpression='#primary_key = :id_value AND #sortkey = :sortkey_value',
+               ExpressionAttributeNames={
+                   '#primary_key': 'id',
+                   '#sortkey': 'rfp_no'
+               },
+               ExpressionAttributeValues={
+                   ':id_value': item_id,
+                   ':sortkey_value': sort_key_value
+               }
+           )
+           items = response.get('Items', [])
+           for item in items:
+               if item.get('id') == item_id and item.get('rfp_no') == sort_key_value:
+                   table1.delete_item(
+                       Key={
+                           'id': item['id'],
+                           'rfp_no': item['rfp_no']
+                       }
+                   )
+                   return {
+                       'statusCode': 200,
+                       'body': json.dumps('Item deleted'),
+                       'headers': {
+                           'Content-Type': 'application/json',
+                           'Access-Control-Allow-Origin': '*'
+                       }
+                   }
+           return {
+               'statusCode': 404,
+               'body': json.dumps('Item not found'),
+               'headers': {
+                   'Content-Type': 'application/json',
+                   'Access-Control-Allow-Origin': '*'
+               }
+           }
+       else:
+           return {
+               'statusCode': 405,
+               'body': json.dumps('Method Not Allowed'),
+               'headers': {
+                   'Content-Type': 'application/json',
+                   'Access-Control-Allow-Origin': '*'
+               }
+           }
+    except Exception as e:
+       print(e)
+       return {
+           'statusCode': 500,
+           'body': json.dumps(str(e)),
+           'headers': {
+               'Content-Type': 'application/json',
+               'Access-Control-Allow-Origin': '*'
+           }
+       }
+    
+ 
+def update_components_and_subcomponents(event):
+   try:
+       requestBody = json.loads(event['body'])
+       old_comp = requestBody.get('OldComponent')
+       new_comp = requestBody.get('NewComponent')
+       subcomponents_to_edit = requestBody.get('subComponentsToEdit')
+       rfp=requestBody.get('RfpNum')
+  
+       response = table.get_item(
+           Key={
+               'Components': old_comp
+           }
+       )
+       item = response.get('Item')
+       if not item:
+           return {
+               'statusCode': 404,
+               'body': json.dumps({"error": "Item not found"})
+           }
+       # Update the component name if it exists
+       if 'Components' in item:
+           table.update_item(
+               Key={
+                   'Components': old_comp
+               },
+               UpdateExpression="SET Components = :val",
+               ExpressionAttributeValues={
+                   ':val': new_comp
+               }
+           )
+       # Modify the specified subcomponents within the array
+       if 'subComponents' in item:
+           subcomponents = item['subComponents']
+           for edit in subcomponents_to_edit:
+               subcomponent_to_edit = edit['subComponentToEdit']
+               new_value = edit['newValue']
+               for index, subcomponent in enumerate(subcomponents):
+                   if subcomponent == subcomponent_to_edit:
+                       subcomponents[index] = new_value
+           # Update the item in DynamoDB with the modified subcomponents
+           table.update_item(
+               Key={
+                   'Components': new_comp
+               },
+               UpdateExpression="SET subComponents = :val",
+               ExpressionAttributeValues={
+                   ':val': subcomponents
+               }
+           )
+           return {
+               'statusCode': 200,
+               'body': json.dumps({"success": True}),
+               'headers': {
+                   'Content-Type': 'application/json',
+                   'Access-Control-Allow-Origin': '*',
+                   'Access-Control-Allow-Methods': '*'
+               }
+           }
+       else:
+           return {
+               'statusCode': 400,
+               'body': json.dumps({"error": "No subComponents in the item"})
+           }
+   except Exception as e:
+       return {
+           'statusCode': 500,
+           'body': json.dumps({"error": str(e)})
+       } 
+
+def lambda_handler(event, context):
+    hcontext=event['httpMethod']
+    
+    # counter_response = counter_table.get_item(Key={'rfp_no': 100})
+    # counter_data = counter_response.get('Item', {})
+    # lastUpdated_rfp_value = counter_data.get('counter_value', None)
+    # sorted_items=sorted(items,key=lambda x: x['id']['N'])
+   
+    if(hcontext=="POST"):
+       return postdata(event)
+    elif(hcontext=='GET'):
+        return getData(event, table)
+    elif(hcontext=='DELETE'):
+        return delete(event)
+    elif(hcontext=='PUT'):
+        return update_components_and_subcomponents(event)
+ 

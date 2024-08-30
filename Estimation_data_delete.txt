@@ -1,0 +1,89 @@
+Estimation_data_delete
+
+
+
+import boto3
+import json
+
+
+dynamodbTableName = 'Estimation_data'
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table(dynamodbTableName)
+
+     
+
+def delete(event,context):
+      payload = json.loads(event['body'])
+      item_id = payload.get('id')
+      sort_key_value = payload.get('RfpNum')
+      
+   
+      try:
+          
+          
+           response = table.scan(
+               FilterExpression='#primary_key = :id_value AND #sortkey = :sortkey_value' ,
+           
+               ExpressionAttributeNames={
+                '#primary_key': 'id',
+                '#sortkey': 'rfp_no'
+    
+                  },
+               ExpressionAttributeValues={
+                 ':id_value': item_id,
+                 ':sortkey_value': sort_key_value
+                  }
+               )
+               
+           items = response.get('Items', []) 
+           a="abc"
+           
+           for item in items:
+               if item.get('id')==item_id and item.get('rfp_no')==sort_key_value:
+               
+                  table.delete_item(
+                       Key={
+                           'id':item['id'],
+                           'rfp_no': item['rfp_no']
+                       }
+                    ) 
+                  a="deleted"
+                  
+           if(a=="deleted"):      
+               return {
+                      'statusCode': 200,
+                      'body': json.dumps({"success":True}),
+                       'headers': {
+                                'ContentType': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Method': '*'
+                                }
+                }
+           return{
+               'statusCode': 404,
+                      'body': json.dumps('Item not found'),
+                       'headers': {
+                                'ContentType': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Method': '*'
+                                }
+           }
+      except Exception as e:
+          print(e)
+          return {
+              'statusCode': 500,
+              'body': json.dumps(str(e)),
+              'headers': {
+                        # 'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                        }
+          }
+          return response
+          
+def lambda_handler(event, context):
+    hcontext=event['httpMethod']
+    
+
+    if(hcontext=='DELETE'):
+        return delete(event,context)

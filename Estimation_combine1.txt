@@ -1,0 +1,104 @@
+Estimation_combine1 
+
+
+import json
+import boto3
+
+client_dynamodb = boto3.client('dynamodb')
+resource_dynamodb = boto3.resource('dynamodb')
+
+table = 'Estimation_Combine'        
+counter_table_name='CounterTable'      
+
+counter_table=resource_dynamodb.Table(counter_table_name)
+estimation_table=resource_dynamodb.Table(table)   
+
+# Fetch the existing value from the counter table
+# counter_response = counter_table.get_item(Key={'rfp_no': 100})
+# counter_data = counter_response.get('Item', {})
+# lastUpdated_rfp_value = counter_data.get('counter_value', None)
+
+def searchId(table,id_to_be_updated):    
+    scan_params = {
+          'TableName': table,   
+          'FilterExpression': '#attribute_name = :attribute_value',
+          'ExpressionAttributeNames' : {
+                '#attribute_name' :'id'
+            },
+          'ExpressionAttributeValues': {
+              ':attribute_value': {'S': str(id_to_be_updated)}
+          }
+    }
+    return client_dynamodb.scan(**scan_params)
+    
+  
+def updatecombine(event,table):
+    try:
+        reqbody=json.loads(event['body'])
+        rfp= reqbody['RfpNum']
+        id_to_be_updated= reqbody['id']
+        # response= searchId(table,id_to_be_updated)
+        
+        # dynamodb.put_item(TableName= Estimation_Combine, Item=)
+        # items = response.get('Items', [])
+       
+
+        # for  item in (reqbody["listdata"]):
+        #           id=listdata['id']['N']
+                
+        # Update the matching items using their primary key
+                #   primary_key_value = id_to_be_updated  # Get the primary key value from the item
+        response = client_dynamodb.update_item(
+          TableName='Estimation_Combine',
+          Key={
+              'id': {'S':str(id_to_be_updated)},
+              'rfp_no':{'N':str(rfp)
+              }
+          },
+          UpdateExpression='SET   adjusted= :newVal3, analysis=:newVal4, build=:newVal5, calculated=:newVal6, confidenceScale=:newVal7,construction=:newVal8,design=:newVal9,referenceIndex=:newVal11,totalEsti=:newVal12,estimation_type=:newVal13,estimation_unit=:newVal14,unitTest=:newVal15 ,estimation_sequence=:newVal16',
+          ExpressionAttributeValues={
+            #   ':newVal1': {'S': str(reqbody['component'])},
+            #   ':newVal2': {'S': str(reqbody['estimation_sequence'])},
+              ':newVal3':{'N': str(reqbody['adjusted'])},
+              ':newVal4':{'N': str(reqbody['analysis'])},
+              ':newVal5':{'N': str(reqbody['build'])},
+              ':newVal6':{'N': str(reqbody['calculated'])},
+              ':newVal7':{'S': str(reqbody['confidenceScale'])},
+              ':newVal8':{'N': str(reqbody['construction'])},
+              ':newVal9':{'N': str(reqbody['design'])},
+              ':newVal11':{'S': str(reqbody['referenceIndex'])},
+              ':newVal12':{'N': str(reqbody['totalEsti'])},
+              ':newVal13':{'S': str(reqbody['estimation_type'])},
+              ':newVal14':{'S': str(reqbody['estimation_unit'])},
+              ':newVal15':{'N': str(reqbody['unitTest'])},
+              ':newVal16': {'S': str(reqbody['estimation_sequence'])}
+              
+          },
+          ReturnValues = 'ALL_NEW'
+        )
+        return{
+                    'statusCode': 200,
+                    'body': json.dumps("updated successfully"), 
+                    'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                        }
+          }       
+    except Exception as e:
+      return{
+          "statusCode": 500,
+          "body": json.dumps(str(e)),
+          "headers": {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+           }
+      }
+
+
+def lambda_handler(event, context):
+    
+    hcontext=event['httpMethod']
+    if(hcontext=='POST'):
+        return updatecombine(event,table)   

@@ -1,0 +1,124 @@
+ Estimation_RFP  
+
+
+import json
+import boto3
+from datetime import datetime
+
+dynamodb = boto3.client('dynamodb')
+dynamodb1 = boto3.resource('dynamodb')
+
+main_table_name = "RFP"  # Replace with your table name
+table = dynamodb1.Table(main_table_name)
+counter_table_name="CounterTable"
+counter_value='100'
+
+def format_string(input_string):
+  # Split the string at the first space
+  parts = input_string.split(' ', 1)
+  if len(parts) > 0:
+    # Take the first part, convert to uppercase
+    formatted_string = parts[0].upper()
+  return formatted_string
+
+#def get_shortForm(productName):
+  #words= productName.split()
+  # shortForm=""
+  # for word in words:
+  #   shortForm += word[0].upper()
+  # return shortForm
+  #if len(words)>0:
+    #shortForm= words[0][0].upper() + words[0][1:].lower()
+  #return shortForm
+def lambda_handler(event, context):
+  try:
+      # Parse the incoming JSON data from the event body
+      request_body = json.loads(event['body'])
+      
+      # Increment the unique column using an Atomic Counter
+      response = dynamodb.update_item(
+          TableName=counter_table_name,
+          Key={'rfp_no':{'N': counter_value}}, 
+          UpdateExpression='ADD counter_value:inc',
+          ExpressionAttributeValues={':inc': {'N':'1'}},
+          ReturnValues='UPDATED_NEW'
+      )
+
+      # Get the incremented value
+      auto_increment_value = response['Attributes']['counter_value']['N']
+
+      # Add your additional columns
+      prod =request_body.get('product')
+      dat =request_body.get('date')
+      #=request_body.get('Formdata',{})
+      fullname =request_body.get('fullName','')
+      #prod = formdata.get('product','')
+      #dat = formdata.get('date','')
+      # Parse the incoming date string
+      date_object = datetime.strptime(dat, '%Y-%m-%d')
+    
+      # Format the date as needed (11AUG)
+      formatted_date = date_object.strftime('%d%b').upper()
+      #formatted_prod = get_shortForm(prod)
+      formatted_prod = format_string(prod)
+      
+      transformed_value = f"RFP_{formatted_date}_{formatted_prod}" 
+      
+      
+      response = table.scan(
+          FilterExpression='#attrName = :dateValue AND product = :productValue',
+          ExpressionAttributeNames={
+              '#attrName':'date'
+          },
+          ExpressionAttributeValues={
+              ':dateValue': dat,
+              ':productValue': prod
+          }
+      )
+      if response['Count'] > 0:
+          return {
+                'statusCode': 200,
+                'body':json.dumps({'success':False}), #rfp already exists
+                'headers': {
+                'ContentType': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+                }
+          }
+      else:
+          # Prepare the item to be inserted into DynamoDB
+          item = {
+            #   'rfp_no': {'N':auto_increment_value},
+            #   'Product':{'S': prod},
+            #   'Format': {'S':transformed_value}
+              'rfp_no': int(auto_increment_value),
+              'product': prod,
+              'date': dat,
+              'format': transformed_value,
+              'creator': fullname
+              # Add more columns as needed
+          }
+      
+          # Insert the item into the DynamoDB table
+          table.put_item(Item=item)
+          response_data={
+                  'success': True, 
+                  'product': prod,
+                  'rfpNo':int(auto_increment_value)
+              }
+        
+          return {
+              "statusCode": 200,
+              "body": json.dumps(response_data),
+              'headers': {
+                'ContentType': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+                }
+          }
+    
+  except Exception as e:
+      response = {
+          "statusCode": 500,
+          "body": json.dumps(str(e))
+      }
+
+  return response

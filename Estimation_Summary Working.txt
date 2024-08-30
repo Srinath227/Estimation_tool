@@ -1,0 +1,236 @@
+import boto3
+from boto3.dynamodb.conditions import Attr
+import logging
+import uuid
+from collections import defaultdict
+import decimal
+import json
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Function to convert float to decimal.Decimal with error handling
+def convert_float_to_decimal(obj):
+    if isinstance(obj, list):
+        return [convert_float_to_decimal(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: convert_float_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, float) or isinstance(obj, int):
+        return decimal.Decimal(str(obj))
+    else:
+        return obj
+
+# Function to convert decimal.Decimal to float
+def convert_decimal_to_float(obj):
+    if isinstance(obj, list):
+        return [convert_decimal_to_float(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {str(k): convert_decimal_to_float(v) for k, v in obj.items()}
+    elif isinstance(obj, decimal.Decimal):
+        return float(obj)
+    else:
+        return obj
+
+def lambda_handler(event, context):
+    try:
+        # Log the entire event to understand its structure
+        logger.info(f"Received event: {json.dumps(event)}")
+
+        # Check if 'httpMethod' exists in the event
+        if 'httpMethod' not in event:
+            raise KeyError('httpMethod not found in the event object')
+
+        http_method = event['httpMethod']
+        dynamodb = boto3.resource('dynamodb')
+        
+        if http_method == 'GET':
+            return handle_get_request(event, dynamodb)
+        elif http_method == 'PUT':
+            return handle_put_request(event, dynamodb)
+        else:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps('Unsupported HTTP method')
+            }
+    except Exception as e:
+        logger.error(f"Error in lambda_handler: {e}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(f"Internal server error: {e}")
+        }
+
+def handle_get_request(event, dynamodb):
+    try:
+        # Check if 'queryStringParameters' exists in the event
+        if 'queryStringParameters' not in event:
+            raise KeyError('queryStringParameters not found in the event object')
+            
+        source_table = dynamodb.Table('Estimation_Combine')
+        rfp_no = event["queryStringParameters"].get("RfpNum")
+        
+        if not rfp_no:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps('RfpNum query parameter is required')
+            }
+
+        # Convert rfp_no to the appropriate type
+        try:
+            rfp_no = int(rfp_no)
+        except ValueError:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps('RfpNum must be an integer')
+            }
+
+        # Log the details of the table and filter
+        logger.info(f"Scanning table 'est_summary' for rfp_no: {rfp_no}")
+
+        # Scan the source table with filter expression
+        try:
+            response = source_table.scan(
+                FilterExpression=Attr('rfp_no').eq(rfp_no)
+            )
+            items = response['Items']
+            logger.info(f"Scanned {len(items)} items from source table.")
+        except Exception as e:
+            logger.error(f"Error scanning source table: {e}")
+            return {
+                'statusCode': 500,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps(f"Error scanning source table: {e}")
+            }
+        
+        if not items:
+            logger.info("No items found for the given RfpNum")
+        
+        # Dictionary to hold totals by unique combination of estimation_sequence and component
+        totals = defaultdict(lambda: defaultdict(lambda: defaultdict(decimal.Decimal)))
+        reference_index_values = set()
+
+        for item in items:
+            if 'referenceIndex' in item and 'component' in item and 'estimation_sequence' in item and 'totalEsti' in item and 'rfp_no' in item:
+                reference_index = item['referenceIndex']
+                clean_reference_index = reference_index.split('-')[0].strip()
+                component = item['component']
+                try:
+                    estimation_sequence = str(item['estimation_sequence'])
+                    total_esti = decimal.Decimal(str(item['totalEsti']))
+                except decimal.DecimalException as e:
+                    logger.error(f"Error converting fields to decimal: {e}, item: {item}")
+                    continue
+                rfp_no = item['rfp_no']
+                # Add to reference index set
+                reference_index_values.add(clean_reference_index)
+                # Sum totalEsti by unique estimation_sequence, component, and referenceIndex
+                totals[estimation_sequence][component][clean_reference_index] += total_esti
+            else:
+                logger.warning(f"Item missing required fields: {item}")
+
+        # Convert the totals dictionary to a JSON serializable format
+        for est_seq, comp_dict in totals.items():
+            for component, ref_index_dict in comp_dict.items():
+                totals[est_seq][component] = convert_decimal_to_float(ref_index_dict)
+
+        reference_index_values = list(reference_index_values)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'reference_index_values': reference_index_values,
+                'totals': convert_decimal_to_float(totals)
+            })
+        }
+    except Exception as e:
+        logger.error(f"Error in handle_get_request: {e}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(f"Internal server error: {e}")
+        }
+
+def handle_put_request(event, dynamodb):
+    try:
+        dest_table = dynamodb.Table('Est_sum')
+        body = json.loads(event['body'])
+
+        logger.info(f"Body of the request: {json.dumps(body)}")
+
+        if 'items' not in body:
+            raise KeyError('items key not found in the body')
+
+        items_to_insert = body['items']
+        for item in items_to_insert:
+            logger.info(f"Processing item: {json.dumps(item)}")
+
+            # Convert numeric values to decimal.Decimal
+            try:
+                item = convert_float_to_decimal(item)
+                logger.info(f"Converted item to decimals: {json.dumps(item)}")
+            except decimal.DecimalException as e:
+                logger.error(f"Error converting item to decimal: {e}, item: {item}")
+                continue
+
+            item['id'] = str(uuid.uuid4())
+            logger.info(f"Item with UUID: {json.dumps(item)}")
+
+            try:
+                # Insert the item into the destination table
+                logger.info(f"Inserting item: {json.dumps(item)}")
+                response = dest_table.put_item(Item=item)
+                logger.info(f"Successfully inserted item: {item['id']} with response: {response}")
+            except Exception as e:
+                logger.error(f"Error inserting item: {e}")
+                return {
+                    'statusCode': 500,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps(f"Error inserting item: {e}")
+                }
+
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps('Items inserted successfully')
+        }
+    except Exception as e:
+        logger.error(f"Error in handle_put_request: {e}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(f"Internal server error: {e}")
+        }

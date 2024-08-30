@@ -1,0 +1,158 @@
+import json
+import boto3
+import decimal
+from boto3.dynamodb.conditions import Attr, Key
+
+resource_dynamodb = boto3.resource('dynamodb')
+client_dynamodb = boto3.client('dynamodb')
+
+counter_table_name = 'CounterTable'
+table_name = 'Estimation_Allocation1'
+
+counter_table = resource_dynamodb.Table(counter_table_name)
+table = resource_dynamodb.Table(table_name)
+
+def genPrimeKey(counter_table_name): 
+    response = client_dynamodb.update_item(
+        TableName=counter_table_name,
+        Key={'rfp_no': {'N': '500'}},
+        UpdateExpression='ADD counter_value :inc',
+        ExpressionAttributeValues={':inc': {'N': '1'}},
+        ReturnValues='UPDATED_NEW'
+    )
+    return response['Attributes']['counter_value']['N']
+    
+    
+def dataupdate(event, context):
+    try:
+        counter_response = counter_table.get_item(Key={'rfp_no': 100})
+        counter_data = counter_response.get('Item', {})
+        additional_column_rfp_value = counter_data.get('counter_value', None)
+
+        requestBody = json.loads(event['body'])
+        RfpNum = requestBody.get('RfpNum')
+
+        for item in requestBody["listdata"]:
+            auto_incremented_id_value = genPrimeKey(counter_table_name)
+            item['rfp_no'] = RfpNum
+            item['id'] = int(auto_incremented_id_value)
+            table.update_item(Item=item)
+
+        response = {
+            'statusCode': 200,
+            'body': json.dumps({'success': True}),
+            'headers': {
+                'ContentType': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Header': '*',
+                'Access-Control-Allow-Method': '*'
+            }
+        }
+    except Exception as e:
+        response = {
+            "statusCode": 500,
+            "body": json.dumps(str(e))
+        }
+    return response
+
+
+def subupdate(event):
+    try:
+        reqbody = json.loads(event['body'])
+        rfp = reqbody.get('RfpNum')
+        phase = reqbody.get('phases')
+        newphase = reqbody.get('newPhase')
+        list1 = reqbody.get('skills', [])
+        list2 = reqbody.get('newSkills', [])
+        l = []
+        uncommon_l1 = []
+        uncommon_l2 = []
+
+        # Filter by rfp
+        response = table.scan(
+            FilterExpression='rfp_no = :val',
+            ExpressionAttributeValues={
+                ':val': rfp
+            }
+        )
+        items = response['Items']
+
+        # Common elements between list1 & list2
+        l = list(set(reqbody.get('skills', [])).intersection(reqbody.get('newSkills', [])))
+
+        # Elements in list1 but not in list2
+        for value in list1:
+            if value not in list2:
+                uncommon_l1.append(value)
+
+        # Elements in list2 but not in list1
+        for value in list2:
+            if value not in list1:
+                uncommon_l2.append(value)
+
+        # Delete rows of uncommon elements in list1
+        for item in items:
+            for skill1 in uncommon_l1:
+                if item['skills'] == skill1:
+                    table.delete_item(
+                        Key={
+                            'id': item.get('id'),
+                            'rfp_no': item.get('rfp_no')
+                        }
+                    )
+
+        # Update phase for common elements in list1
+        for s1 in l:
+            if 'phases' in item and item['phases'] == phase and 'skills' in item and item['skills'] == s1:
+                response = table.update_item(
+                    Key={
+                        'id': item['id'],
+                        'rfp_no': rfp
+                    },
+                    UpdateExpression='SET phases = :val',
+                    ExpressionAttributeValues={
+                        ':val': newphase
+                    },
+                    ReturnValues='UPDATED_NEW'
+                )
+
+        # Create new row for uncommon elements in list2
+        for skill2 in uncommon_l2:
+            auto_incremented_id_value = genPrimeKey(counter_table_name)
+            new_item = {
+                'id': int(auto_incremented_id_value),
+                'rfp_no': rfp,
+                'phases': newphase,
+                'skills': skill2
+            }
+            table.put_item(Item=new_item)
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps({"success": True}),
+            'headers': {
+                'ContentType': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Method': '*'
+            }
+        }
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": json.dumps(str(e)),
+            "headers": {
+                'ContentType': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Method': '*'
+            }
+        }
+
+
+def lambda_handler(event, context):
+    hcontext=event['httpMethod']
+    
+    
+    if(hcontext=='POST'):
+        return dataupdate(event,context)
+    elif(hcontext=='PUT'):
+        return subupdate(event)

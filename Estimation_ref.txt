@@ -1,0 +1,162 @@
+Estimation_ref 
+
+
+import json
+import boto3
+
+client_dynamodb = boto3.client('dynamodb')
+resource_dynamodb = boto3.resource('dynamodb')
+
+table = 'Estimation_Metrics'        
+counter_table_name='CounterTable'      
+
+counter_table=resource_dynamodb.Table(counter_table_name)
+estimation_table=resource_dynamodb.Table(table)   
+
+# Fetch the existing value from the counter table
+# counter_response = counter_table.get_item(Key={'rfp_no': 100})
+# counter_data = counter_response.get('Item', {})
+# lastUpdated_rfp_value = counter_data.get('counter_value', None)
+
+def filterByRfp(table, lastUpdated_rfp_value):    
+    scan_params = {
+          'TableName': table,   
+          'FilterExpression': '#attribute_name = :attribute_value',
+          'ExpressionAttributeNames' : {
+                '#attribute_name' :'rfp_no'
+            },
+          'ExpressionAttributeValues': {
+              ':attribute_value': {'N': str(lastUpdated_rfp_value)}
+          }
+    }
+    return client_dynamodb.scan(**scan_params)
+    
+  
+        
+def generate_suggestions(sorted_index):
+    try:
+        response3=client_dynamodb.scan(TableName='Estimation_Metrics')
+        count=0 
+        sum_hrs= 0
+        count1=5
+        if 'Items' in response3:
+            for item in response3['Items']:
+                if 'index' in item and item['index']== sorted_index:
+                    if 'hours' in item:
+                        chk_hrs= item['hours']['N']
+                        sum_hrs= int(sum_hrs)+ int(chk_hrs)
+                        count= count+1
+            if count>0:
+                avg= sum_hrs/count
+                return round(avg)
+            else:
+                return None
+        else:
+                return None
+    except Exception as e:
+        return { 
+          'statusCode': 500,
+          'body': json.dumps(str(e)),
+          'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                    } 
+      }
+
+def getRefEsti(event,table):    
+    # suggestions= [] 
+    try: 
+        rfp = event["queryStringParameters"]["RfpNum"]
+        response= filterByRfp(table,rfp) 
+        items = response.get('Items', [])
+        sorted_items=sorted(items,key=lambda x: int (x['id']['N']),reverse=True)
+        # for item in sorted_items:  (since we r dng cpy paste from the sample data no need for suggesstions)
+        #     if 'index' in item:
+        #         sorted_index= item['index']    
+        #         result = generate_suggestions(sorted_index)
+        #         item['hours']={'N':result}
+        # Implement pagination and sort smaller chunks
+        response2= { 
+          'statusCode': 200,
+          'body': json.dumps(sorted_items),
+          'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                    } 
+        }
+    except Exception as e: 
+        response2= { 
+          'statusCode': 500,  
+          'body': json.dumps(str(e)),
+          'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                    } 
+      }
+    return response2
+
+def postRefEsti(event):
+    try:
+        reqbody=json.loads(event['body'])
+        rfp= reqbody['RfpNum']
+        response= filterByRfp(table,rfp) 
+        items = response.get('Items', [])
+        sorted_items=sorted(items,key=lambda x: int (x['id']['N']),reverse=True)
+
+        for listdata, item in zip(reqbody["listdata"],sorted_items):
+                  Hrs=listdata['hours']['N']
+                # Hrs=listdata[i]
+        # Update the matching items using their primary key
+                  primary_key_value = item['id']['N']  # Get the primary key value from the item
+                  client_dynamodb.update_item(
+                      TableName='Estimation_Metrics',
+                      Key={
+                          'id': {'N': primary_key_value},
+                          'rfp_no':{'N':str(rfp) }
+                        #   'rfp_no':{'N':'20' }
+                      },
+                      UpdateExpression='SET #newAttr = :newValue',
+                      ExpressionAttributeNames={
+                          '#newAttr': 'hours'
+                      },
+                      ExpressionAttributeValues={
+                          ':newValue': {'N':str(Hrs)}
+                      }     
+                  )
+        response1 = {
+                    'statusCode': 200,
+                    'body': json.dumps("updated successfully"), 
+                    'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                        }
+          }       
+    except Exception as e:
+      response1 = {
+          "statusCode": 500,
+          "body": json.dumps(str(e)),
+          "headers": {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+           }
+      }
+    return response1
+
+def lambda_handler(event, context):
+    # counter_response = counter_table.get_item(Key={'rfp_no': 100})
+    # counter_data = counter_response.get('Item', {})
+    # lastUpdated_rfp_value = counter_data.get('counter_value', None)
+    # response= filterByRfp(table, lastUpdated_rfp_value) 
+    # items = response.get('Items', [])
+    # sorted_items=sorted(items,key=lambda x: x['id']['N'],reverse= True)
+    
+    hcontext=event['httpMethod']
+    if(hcontext=='GET'):
+        return getRefEsti(event,table)        
+    elif(hcontext=='POST'):
+        return postRefEsti(event)
+
+

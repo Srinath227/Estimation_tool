@@ -1,0 +1,239 @@
+Estimation_metrics 
+
+import json
+import boto3
+from boto3.dynamodb.conditions import Attr
+
+resource_dynamodb = boto3.resource('dynamodb')
+client_dynamodb=boto3.client('dynamodb')
+ 
+counter_table_name = 'CounterTable' 
+table_name= 'Estimation_Metrics'
+
+counter_table = resource_dynamodb.Table(counter_table_name)
+table = resource_dynamodb.Table(table_name)
+
+# Fetch the existing  RFP value from the counter table
+# counter_response = counter_table.get_item(Key={'rfp_no': 100})
+# counter_data = counter_response.get('Item', {})
+# additional_column_rfp_value = counter_data.get('counter_value', None)
+
+def genPrimeKey(counter_table_name):
+    response = client_dynamodb.update_item(
+                        TableName= counter_table_name,
+                        Key={'rfp_no':{'N': '200'}}, #counter_value=200
+                        UpdateExpression='ADD counter_value:inc',
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+                        ReturnValues='UPDATED_NEW'
+                    )
+    # Get the incremented value 
+    return response['Attributes']['counter_value']['N']
+
+# def reset_counter():
+#   try:
+#       response = client_dynamodb.update_item(
+#           TableName= 'CounterTable',
+#           Key={'rfp_no': {'N': '200'}},  # Assuming 'counter_id' is your partition key
+#           UpdateExpression='SET #newAttr = :newValue',
+#           ExpressionAttributeNames={
+#                           '#newAttr': 'counter_value'
+#                       },
+#           ExpressionAttributeValues={
+#                           ':newValue': {'N':'0'}
+#                       }  
+#         #   UpdateExpression='SET counter_value = :value',
+#         #   ExpressionAttributeValues={':value': {'N': '1'}}
+#       )
+#       print("Counter reset successful.")
+#   except Exception as e:
+#       print("Counter reset failed:", e) 
+
+def delete(event):
+#   def lambda_handler(event, context):
+    try:
+       requestBody=json.loads(event['body'])
+       sort_key_value = requestBody.get('RfpNum')  # Replace 'sort_key_value' with the sort key value you want to match
+       phase = requestBody.get('phase')  # Replace 'YourOtherColumnName' with the name of the other column
+    #   other_column_value = event['other_column_value']  # Replace 'other_column_value' with the value for the other column you want to match
+    #   sizes = requestBody.get('size')
+    #   complexities = requestBody.get('complexity')
+        # Loop through the items to delete
+    #   for size, complexity in zip(sizes, complexities):
+
+       response = table.scan(
+           FilterExpression='#sortkey = :sortkey_value AND #othercolumn = :othercolumn_value',
+           
+           ExpressionAttributeNames={
+               '#sortkey': 'rfp_no',  # Replace 'SortKey' with your actual sort key attribute name
+               '#othercolumn': 'phase'
+            #   '#othercolumn1': 'size',
+            #   '#othercolumn2': 'complexity'
+
+           },
+           ExpressionAttributeValues={
+               ':sortkey_value': sort_key_value,
+               ':othercolumn_value': phase
+            #   ':othercolumn_value1':size,
+            #   ':othercolumn_value2': complexity
+           }
+       )
+
+       items = response.get('Items', [])
+       a="abc"
+       for item in items:
+           if(
+               item.get('rfp_no')==sort_key_value and
+               item.get('phase')==phase 
+            #   item.get('size') in sizes and
+            #   item.get('complexity') in complexities
+            ):
+               table.delete_item(
+                   Key={
+                       'id': item['id'],  # Replace 'PartitionKey' with your partition key attribute name
+                       'rfp_no': item['rfp_no']  # Replace 'SortKey' with your sort key attribute name
+                   }
+               )
+               a="deleted"
+           
+       if(a=="deleted"):
+           return {
+               'statusCode': 200,
+               'body': json.dumps({"success":True}), #Items deleted successfully
+               'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                        }
+           }
+       else:
+            return {
+               'statusCode': 200,
+               'body': json.dumps({"success":False}),
+               'headers': {
+                        'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                        }
+           }
+            
+    except Exception as e:
+      response = {
+          "statusCode": 500,
+          "body": json.dumps(str(e)),
+          'headers': {
+                    'ContentType': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Method': '*'
+                    }
+      }
+    return response
+          
+
+def post(event,context):
+    try:
+
+        requestBody=json.loads(event['body'])
+
+        # frontend data
+        phase = requestBody.get('Phase')
+        sizes = requestBody.get('Size',[])
+        complexities = requestBody.get('Complexity',[])
+        hours = requestBody.get('Hours',0)
+        RfpNum = requestBody.get('RfpNum')
+        Product = requestBody.get('Product')
+        
+        counter_response = counter_table.get_item(Key={'rfp_no': 100})
+        counter_data = counter_response.get('Item', {})
+        # additional_column_rfp_value = counter_data.get('counter_value', None)
+        
+        
+        
+        
+        # if not sizes: # if size is null in json then assign it to none
+        #     sizes = [None]
+        # for size_item in sizes: #small
+        #     if not complexities:
+        #         complexities = [None]
+        #     for complexity_item in complexities: #low
+        #         auto_incremented_id_value= genPrimeKey(counter_table_name)
+                
+        #         size_item_value= "NA" if size_item is None else size_item
+        #         complexity_item_value= "NA" if complexity_item is None else complexity_item
+                
+        #         index_value = f"{phase}-{size_item_value}.{complexity_item_value}" 
+        
+        response = table.scan(
+              FilterExpression='#attrName = :PhaseValue AND rfp_no = :RfpValue',
+              ExpressionAttributeNames={
+                  '#attrName':'phase'
+              },
+              ExpressionAttributeValues={
+                  ':PhaseValue': phase,
+                  ':RfpValue':RfpNum
+                  
+              }
+          )
+        if response['Count'] > 0:
+             return {
+                    'statusCode': 200,
+                    'body':json.dumps({'success':False}), #phase already exists
+                    'headers': {
+                    'ContentType': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                    }
+             }
+        else:
+            if not sizes: # if size is null in json then assign it to none
+                sizes = [None]
+            for size_item in sizes: #small
+                if not complexities:
+                    complexities = [None]
+                for complexity_item in complexities: #low
+                    auto_incremented_id_value= genPrimeKey(counter_table_name)
+                
+                    size_item_value= "NA" if size_item is None else size_item
+                    complexity_item_value= "NA" if complexity_item is None else complexity_item
+                
+                    index_value = f"{phase}-{size_item_value}.{complexity_item_value}" 
+            
+                    item ={
+                        'phase':phase,
+                        'size':size_item_value,
+                        'complexity':complexity_item_value,
+                        'hours':hours,
+                        'rfp_no':RfpNum,
+                        'id':int(auto_incremented_id_value),
+                        'index':index_value,
+                        'product':Product
+                    }
+                    table.put_item(Item=item)
+            # reset_counter()
+                    response = {
+                            'statusCode': 200,
+                            'body': json.dumps({'success':True}), 
+                            'headers': {
+                                'ContentType': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Method': '*'
+                            }
+                    }          
+    except Exception as e:
+      response = {
+          "statusCode": 500,
+          "body": json.dumps(str(e))
+      }
+    return response
+    
+def lambda_handler(event, context):
+    
+    counter_response = counter_table.get_item(Key={'rfp_no': 100})
+    counter_data = counter_response.get('Item', {})
+    additional_column_rfp_value = counter_data.get('counter_value', None)
+    
+    hcontext=event['httpMethod']
+    if(hcontext=='POST'):
+        return post(event,context)        
+    elif(hcontext=='DELETE'):
+        return delete(event)
+
+      

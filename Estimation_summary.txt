@@ -1,0 +1,147 @@
+Estimation_summary
+
+
+import boto3
+import json
+
+dynamodb = boto3.resource('dynamodb') 
+source_table_name = 'Estimation_Combine'
+target_table_name = 'Est_summary'
+
+def filterByRfp(target_table_name, rfp):
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(target_table_name)
+
+    response = table.scan(
+        FilterExpression='rfp_no = :rfp',
+        ExpressionAttributeValues={':rfp': rfp}
+    )
+
+    return response
+ 
+def putSummary(event):
+
+    try:
+        # Step 1: Scan the estimation_combine table with pagination
+        source_table = dynamodb.Table(source_table_name)
+        response = source_table.scan()
+        items = response['Items']
+
+        # Continue scanning if the dataset is large
+        while 'LastEvaluatedKey' in response:
+            response = source_table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            items.extend(response['Items'])
+        
+        # Step 2: Calculate total totalesti for each unique combination of component, referenceIndex, rfp_no, and estimation_sequence
+        result_dict = {}
+        unique_combination_set = set()
+        
+        for item in items:
+            component = item.get('component', '')
+            reference_index = item.get('referenceIndex', '')
+            rfp_no = item.get('rfp_no', '')
+            
+            # Extract the value before '-' in the referenceIndex
+            extracted_reference_index = reference_index.split('-')[0] if '-' in reference_index else reference_index
+            
+            # Only consider unique combinations of component, referenceIndex, and rfp_no
+            combination = f"{component}#{extracted_reference_index}#{rfp_no}"
+            
+            if combination not in unique_combination_set:
+                # Remove any '-' characters from the extracted_reference_index
+                extracted_reference_index = extracted_reference_index.replace('-', '')
+                
+                sequence = str(item.get('estimation_sequence', ''))
+                total_esti = int(item.get('totalEsti', 0))
+
+                if component and extracted_reference_index and sequence and rfp_no:
+                    # Use the combination of component, referenceIndex, rfp_no, and estimation_sequence as the primary key
+                    primary_key = f"{component}#{extracted_reference_index}#{rfp_no}"
+
+                    if primary_key in result_dict:
+                        result_dict[primary_key]['totalEsti'] += total_esti
+                    else:
+                        result_dict[primary_key] = {
+                            'totalEsti': total_esti,
+                            'component': component,
+                            'referenceIndex': extracted_reference_index,
+                            'estimation_sequence': sequence,
+                            'rfp_no': rfp_no
+                        }
+                        
+                    # Add the combination to the set to track unique values
+                    unique_combination_set.add(combination)
+
+        # Step 3: Save the total totalesti, component, referenceIndex, rfp_no, estimation_sequence in the est_summary table
+        target_table = dynamodb.Table(target_table_name)
+        for key, attributes in result_dict.items():
+            target_table.put_item(Item={
+                'summary': key,
+                'esti_hours': attributes['totalEsti'],
+                'component': attributes['component'],
+                'referenceIndex': attributes['referenceIndex'],
+                'estimation_sequence': attributes['estimation_sequence'],
+                'rfp_no': attributes['rfp_no']
+            })
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Hello from Lambda with GET!')
+        }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f'Error: {str(e)}')
+        }
+
+
+
+def getSummary(event, target_table_name):
+    try:
+        # Assuming the 'RfpNums' is passed in the request body as an array
+        request_body = json.loads(event['body'])
+        rfps = request_body.get('rfp_no', [])
+
+        if not rfps:
+            raise ValueError("RfpNums are missing in the request body.")
+
+        result_dict = {}
+
+        for rfp in rfps:
+            response = filterByRfp(target_table_name, rfp)
+            items = response.get('Items', [])
+
+            # Modify items to remove 'rfp_no' field
+            for item in items:
+                if 'rfp_no' in item:
+                    del item['rfp_no']
+
+            # Add the items to the result dictionary using the rfp as the key
+            result_dict[rfp] = items
+
+        response3 = {
+            'statusCode': 200,
+            'body': json.dumps(result_dict),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+
+    except Exception as e:
+        response3 = {
+            'statusCode': 500,
+            'body': json.dumps(str(e)),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+
+    return response3
+def lambda_handler(event, context):
+    hcontext=event["httpMethod"]
+    if(hcontext=='GET'):
+         return getData(event,target_table_name)
+    elif(hcontext=='PUT'):
+        return putSummary(event)

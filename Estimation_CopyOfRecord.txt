@@ -1,0 +1,131 @@
+Estimation_CopyOfRecord
+
+import json
+import boto3
+  # Create DynamoDB clients for the three tables
+dynamodb = boto3.client('dynamodb')
+resource_dynamodb = boto3.resource('dynamodb')
+ 
+sdlc_table = 'Estimation_sdlc'
+metrics_table = 'Estimation_Metrics'
+data_table = 'Estimation_data'
+counter_table_name='CounterTable'
+ 
+counter_table=resource_dynamodb.Table(counter_table_name)
+
+def autoIdSdlc(counter_table_name):
+  response = dynamodb.update_item(
+
+                        TableName= counter_table_name,
+
+                        Key={'rfp_no':{'N': '300'}}, #counter_value=200
+
+                        UpdateExpression='ADD counter_value:inc',
+
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+
+                        ReturnValues='UPDATED_NEW'
+
+                    )
+  return response['Attributes']['counter_value']['N']
+def autoIddata(counter_table_name):
+    response = dynamodb.update_item(
+
+                        TableName= counter_table_name,
+
+                        Key={'rfp_no':{'N': '400'}}, #counter_value=200
+
+                        UpdateExpression='ADD counter_value:inc',
+
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+
+                        ReturnValues='UPDATED_NEW'
+
+                    )
+    return response['Attributes']['counter_value']['N']
+def autoIdmetrics(counter_table_name):
+    response = dynamodb.update_item(
+
+                        TableName= counter_table_name,
+
+                        Key={'rfp_no':{'N': '200'}}, #counter_value=200
+
+                        UpdateExpression='ADD counter_value:inc',
+
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+
+                        ReturnValues='UPDATED_NEW'
+
+                    )
+    return response['Attributes']['counter_value']['N']
+    
+
+# Fetch the existing value from the counter table
+def lambda_handler(event, context):
+    # try: 
+    counter_response = counter_table.get_item(Key={'rfp_no': 100})
+    counter_data = counter_response.get('Item', {})
+    lastUpdated_rfp_value = counter_data.get('counter_value', None)
+    # new_sdlc_id= auto_incremented_id_value
+    # new_data_id=auto_incremented_id_value
+    # new_metrics_id=auto_incremented_id_value
+       # Extract the unchanging RFP ID from the event
+    try:
+           reqBody= json.loads(event['body'])     
+           rfp_id = reqBody.get('rfp_no')
+           product = reqBody.get('product')
+        #   rfp_id = reqBody['rfp_no']
+        #   product = reqBody['product']
+           # Retrieve data from sdlc, metrics, and data tables for the unchanging RFP
+           sdlc_data = dynamodb.scan(TableName=sdlc_table, FilterExpression="rfp_no = :rfp_no", ExpressionAttributeValues={":rfp_no":  {'N': str(rfp_id)}})
+           metrics_data = dynamodb.scan(TableName=metrics_table, FilterExpression="rfp_no = :rfp_no", ExpressionAttributeValues={":rfp_no": {'N': str(rfp_id)}})
+           data_data = dynamodb.scan(TableName=data_table, FilterExpression="rfp_no = :rfp_no", ExpressionAttributeValues={":rfp_no":{'N': str(rfp_id)}})
+           print(rfp_id)  
+        #   metrics_data_sorted = sorted(metrics_data['Items'], key=lambda x: x.get('id',0))
+           # ':attribute_value': {'N': str(lastUpdated_rfp_value)}
+           # Extract the new RFP ID from the event (it changes)
+        #   new_rfp_id = 10
+           # Iterate through the scanned rows and post them to their respective tables within the new RFP
+           
+           for row in sorted(metrics_data['Items'], key=lambda x: int (x['id']['N']),reverse=True):   
+               auto_incremented_id_value_metrics=autoIdmetrics(counter_table_name)
+               row['rfp_no'] = {'N': str(lastUpdated_rfp_value)}
+               row['id']={'N': auto_incremented_id_value_metrics}
+            #   row['product'] = {'S': product}  
+               dynamodb.put_item(TableName=metrics_table, Item=row)  
+
+             
+            #   new_sdlc_id+=1
+           for row in data_data['Items']:
+               auto_incremented_id_value_data=autoIddata(counter_table_name)
+               row['rfp_no'] = {'N': str(lastUpdated_rfp_value)}
+               row['id']={'N': auto_incremented_id_value_data}
+               dynamodb.put_item(TableName=data_table, Item=row)
+               
+           for row in sdlc_data['Items']:
+               auto_incremented_id_value_sdlc= autoIdSdlc(counter_table_name)
+               row['rfp_no'] = {'N': str(lastUpdated_rfp_value)}# Change the RFP ID to the new one
+               row['id']={'N':  auto_incremented_id_value_sdlc}
+               dynamodb.put_item(TableName=sdlc_table, Item=row)       
+            #   new_data_id+=1
+        
+            #   new_metrics_id+=1
+        #   for row in data_data['Items']:
+        #       row['rfp_no'] = {'N': str(lastUpdated_rfp_value)}
+            #       dynamodb.put_item(TableName=data_table, Item=row)
+           success_response = json.dumps({'success':True})    
+           response = {
+                "statusCode": 200,
+                "body":success_response, #rfp already exists
+                "headers": {
+                "ContentType": "application/json",
+                "Access-Control-Allow-Origin": '*',
+                "Access-Control-Allow-Method": '*' 
+                }
+            }
+    except Exception as e:
+      response = {
+          "statusCode": 500,
+          "body": json.dumps(str(e))
+      }
+    return response

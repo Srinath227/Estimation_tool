@@ -1,0 +1,239 @@
+import json
+import boto3
+import decimal
+from boto3.dynamodb.conditions import Attr, Key
+
+resource_dynamodb = boto3.resource('dynamodb')
+client_dynamodb = boto3.client('dynamodb')
+
+counter_table_name = 'CounterTable'
+table_name = 'Estimation_Allocation1'
+
+counter_table = resource_dynamodb.Table(counter_table_name)
+table = resource_dynamodb.Table(table_name)
+
+def genPrimeKey(counter_table_name): 
+    response = client_dynamodb.update_item(
+        TableName=counter_table_name,
+        Key={'rfp_no': {'N': '500'}},
+        UpdateExpression='ADD counter_value :inc',
+        ExpressionAttributeValues={':inc': {'N': '1'}},
+        ReturnValues='UPDATED_NEW'
+    )
+    return response['Attributes']['counter_value']['N']
+
+def post(event, context):
+    try:
+        requestBody = json.loads(event['body'])
+
+        phases = requestBody.get('phases')
+        skills = requestBody.get('skills')
+        RfpNum = requestBody.get('rfp_no')
+
+        if not (phases and skills and RfpNum):
+            return {
+                'statusCode': 400,
+                'body': json.dumps('Missing required fields in request body'),
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            }
+
+        auto_incremented_id_value = genPrimeKey(counter_table_name)
+
+        item = {
+            'phases': phases,
+            'skills': skills,
+            'rfp_no': RfpNum,
+            'id': int(auto_incremented_id_value),
+        }
+
+        table.put_item(Item=item)
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Item inserted successfully'),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(str(e)),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+
+# Helper function to convert Decimal to float or int
+def decimal_to_native_type(value):
+    if isinstance(value, decimal.Decimal):
+        # Check if the value has no fractional part
+        if value % 1 == 0:
+            return int(value)
+        else:
+            return float(value)
+    elif isinstance(value, list):
+        return [decimal_to_native_type(v) for v in value]
+    elif isinstance(value, dict):
+        return {k: decimal_to_native_type(v) for k, v in value.items()}
+    else:
+        return value
+
+def get(event, context):
+    try:
+        # Check if queryStringParameters exists and RfpNum is provided
+        if 'queryStringParameters' not in event or 'RfpNum' not in event['queryStringParameters']:
+            return {
+                'statusCode': 400,
+                'body': json.dumps('RfpNum query parameter is required'),
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            }
+
+        # Extract and convert RfpNum to number
+        rfp = event['queryStringParameters']['RfpNum']
+        try:
+            rfp_num = int(rfp)
+        except ValueError:
+            return {
+                'statusCode': 400,
+                'body': json.dumps('Invalid RfpNum, must be a number'),
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            }
+
+        print(f"Received RfpNum: {rfp_num}")
+
+        # Scan the table for items with matching rfp_no
+        response = table.scan(
+            FilterExpression=Attr('rfp_no').eq(rfp_num)
+        )
+        items = response.get('Items', [])
+        print(f"Filtered items for rfp_no={rfp_num}: {items}")
+
+        if not items:
+            print(f"No items found for rfp_no: {rfp_num}")
+            return {
+                'statusCode': 404,
+                'body': json.dumps(f'No items found for rfp_no: {rfp_num}'),
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            }
+
+        # Convert Decimal types to native types
+        native_items = [decimal_to_native_type(item) for item in items]
+
+        # Sort items by 'id' in ascending order
+        sorted_items = sorted(native_items, key=lambda x: x['id'])
+        print(f"Sorted items: {sorted_items}")
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps(sorted_items),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps(str(e)),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        }
+        
+def delete(event,context):
+      payload = json.loads(event['body'])
+      item_id = payload.get('id')
+      sort_key_value = payload.get('RfpNum')
+      
+   
+      try:
+          
+          
+           response = table.scan(
+               FilterExpression='#primary_key = :id_value AND #sortkey = :sortkey_value' ,
+           
+               ExpressionAttributeNames={
+                '#primary_key': 'id',
+                '#sortkey': 'rfp_no'
+    
+                  },
+               ExpressionAttributeValues={
+                 ':id_value': item_id,
+                 ':sortkey_value': sort_key_value
+                  }
+               )
+               
+           items = response.get('Items', []) 
+           a="abc"
+           
+           for item in items:
+               if item.get('id')==item_id and item.get('rfp_no')==sort_key_value:
+               
+                  table.delete_item(
+                       Key={
+                           'id':item['id'],
+                           'rfp_no': item['rfp_no']
+                       }
+                    ) 
+                  a="deleted"
+                  
+           if(a=="deleted"):      
+               return {
+                      'statusCode': 200,
+                      'body': json.dumps({"success":True}),
+                       'headers': {
+                                'ContentType': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Method': '*'
+                                }
+                }
+           return{
+               'statusCode': 404,
+                      'body': json.dumps('Item not found'),
+                       'headers': {
+                                'ContentType': 'application/json',
+                                'Access-Control-Allow-Origin': '*',
+                                'Access-Control-Allow-Method': '*'
+                                }
+           }
+      except Exception as e:
+          print(e)
+          return {
+              'statusCode': 500,
+              'body': json.dumps(str(e)),
+              'headers': {
+                        # 'ContentType': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Method': '*'
+                        }
+          }
+          return response
+
+def lambda_handler(event, context):
+    http_method = event['httpMethod']
+    
+    if http_method == 'POST':
+        return post(event, context)        
+    elif http_method == 'GET':
+        return get(event, context)
+    elif http_method == 'DELETE':
+        return delete(event,context)

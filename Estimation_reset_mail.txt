@@ -1,0 +1,57 @@
+Estimation_reset_mail 
+
+import json
+import boto3
+dynamodb=boto3.resource('dynamodb')
+table_name="Estimation_Login"
+table=dynamodb.Table(table_name)
+
+
+        
+# SignIn
+def getuser(event):
+    try:
+        data=event["queryStringParameters"]["email"]
+        
+        L=[]
+        response=table.scan()
+        items=response["Items"]
+        k1="abcd"
+        for i in items:
+            if(data==i["email"] ):
+                response_data={
+                    'success':True,
+                    'username':i["username"]
+                }
+                k1="bcda"
+                break
+        if(k1=="bcda"):
+            return{
+                        'statusCode':200,
+                        'headers': {'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+                        'body': json.dumps(response_data)
+                    }
+        else:
+            return {
+              'statusCode': 200,
+              'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*' },
+              'body': json.dumps({'success':False})
+            }
+                
+    except Exception as e:
+        return{
+            'statusCode':500,
+            'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+            'body':f'Error retrieving items {e}'
+        }
+
+
+def lambda_handler(event, context):
+    hcontext=event["httpMethod"]
+    if(hcontext=="POST"):
+        return postuser(event)
+    elif(hcontext=="GET"):
+        return getuser(event)
+    elif(hcontext=="PUT"):
+        return forgotpw(event)
+   

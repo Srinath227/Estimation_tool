@@ -1,0 +1,118 @@
+Estimation_Login
+
+
+import json
+import boto3
+dynamodb=boto3.resource('dynamodb')
+table_name="Estimation_Login"
+table=dynamodb.Table(table_name)
+# SignUp
+def postuser(event):
+    try:
+        data=json.loads(event["body"])
+        L1=[]
+        response=table.scan()
+        items=response['Items']
+        for item in items:
+            L1.append(item["email"])
+        if(data["email"] in L1):
+            return{
+                'statusCode':200,
+                'headers': {'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+                'body':json.dumps("Email already existing")
+            }
+        else:
+            item={
+                'email':data["email"],
+                'password':data["password"],
+                'username':data["username"]
+            }
+            table.put_item(Item=item)
+            return{
+                'statusCode': 200,
+                'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+                'body': json.dumps('Registered successfully')
+            }
+    except Exception as exception:
+        return{
+            'statusCode':500,
+            'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+            'body':f'Error retrieving items {exception}'
+        }
+        
+# SignIn
+def getuser(event):
+    try:
+        data=event["queryStringParameters"]["email"]
+        data1=event["queryStringParameters"]["password"]
+        L=[]
+        response=table.scan()
+        items=response["Items"]
+        k1="abcd"
+        for i in items:
+            if(data==i["email"] and data1==i["password"]):
+                response_data={
+                    'success':True,
+                    'username':i["username"]
+                }
+                k1="bcda"
+                break
+        if(k1=="bcda"):
+            return{
+                        'statusCode':200,
+                        'headers': {'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+                        'body': json.dumps(response_data)
+                    }
+        else:
+            return {
+              'statusCode': 200,
+              'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*' },
+              'body': json.dumps({'success':False})
+            }
+                
+    except Exception as e:
+        return{
+            'statusCode':500,
+            'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,OPIONS' },
+            'body':f'Error retrieving items {e}'
+        }
+# Forgot
+def forgotpw(event):
+    try:
+        data=event["pathParameters"]["email"]
+        data1=json.loads(event["body"])
+        try:
+            response=table.get_item(Key={"email":data})
+            g1=response['Item']
+            g1["email"]=data
+            g1["username"]=g1["username"]
+            g1["password"]=data1["password"]
+            table.put_item(Item=g1)
+            return{
+                    'statusCode':200,
+                    'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,PUT,OPIONS' },
+                    'body': json.dumps("updated successfully")
+                }
+        except:
+            k1={"email":"","password":"","username":""}
+            return{
+                    'statusCode':500,
+                    'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,PUT,OPIONS' },
+                    'body': json.dumps(k1)
+                    }
+    except Exception as e:
+        return{
+            'statusCode':500,
+            'headers': { 'Content-Type': 'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Headers':'GET,POST,PUT,OPIONS' },
+            'body':f'Error retrieving items {e}'
+        }
+
+def lambda_handler(event, context):
+    hcontext=event["httpMethod"]
+    if(hcontext=="POST"):
+        return postuser(event)
+    elif(hcontext=="GET"):
+        return getuser(event)
+    elif(hcontext=="PUT"):
+        return forgotpw(event)
+   

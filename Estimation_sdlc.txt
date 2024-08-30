@@ -1,0 +1,370 @@
+ Estimation_sdlc 
+
+import json
+
+import boto3
+
+
+
+client_dynamodb = boto3.client('dynamodb')
+
+resource_dynamodb = boto3.resource('dynamodb')
+
+
+
+table = 'Estimation_sdlc'
+
+counter_table_name='CounterTable'
+
+
+
+
+
+counter_table=resource_dynamodb.Table(counter_table_name)
+
+estimation_sdlc_table=resource_dynamodb.Table(table)
+
+       
+
+# Fetch the existing value from the counter table
+
+# counter_response = counter_table.get_item(Key={'rfp_no': 100})
+
+# counter_data = counter_response.get('Item', {})
+
+# lastUpdated_rfp_value = counter_data.get('counter_value', None)
+
+ 
+
+
+
+
+
+def filterByRfp(table, lastUpdated_rfp_value):
+
+    scan_params = {
+
+          'TableName': table,
+
+          'FilterExpression': '#attribute_name = :attribute_value',
+
+          'ExpressionAttributeNames' : {
+
+                '#attribute_name' :'rfp_no'
+
+            },
+
+          'ExpressionAttributeValues': {
+
+              ':attribute_value': {'N': str(lastUpdated_rfp_value)}
+
+          }
+
+    }
+
+    
+
+    return client_dynamodb.scan(**scan_params)
+
+    
+
+def genPrimeKey(counter_table_name):
+
+    response = client_dynamodb.update_item(
+
+                        TableName= counter_table_name,
+
+                        Key={'rfp_no':{'N': '300'}}, #counter_value=200
+
+                        UpdateExpression='ADD counter_value:inc',
+
+                        ExpressionAttributeValues={':inc': {'N':'1'}},
+
+                        ReturnValues='UPDATED_NEW'
+
+                    )
+
+    # Get the incremented value
+
+    return response['Attributes']['counter_value']['N']
+
+    
+
+# def postSdlc(event,lastUpdated_rfp_value):
+
+def postSdlc(event):
+
+    try:
+
+        requestBody=json.loads(event['body'])
+        rfp= requestBody['RfpNum']
+
+        for sdlcdata in requestBody["p"]:
+
+                phase=sdlcdata['phase']
+
+                lifecycle =sdlcdata['lifecycle']
+
+                auto_incremented_id_value= genPrimeKey(counter_table_name)
+
+                item ={
+
+                    'phase':phase,    
+
+                    'lifecycle':lifecycle,
+
+                    # 'rfp_no':int(lastUpdated_rfp_value),
+
+                    'rfp_no':rfp,
+
+                    'id':int(auto_incremented_id_value)
+
+                }
+
+                estimation_sdlc_table.put_item(Item=item)
+
+           
+
+        response1= {
+
+                'statusCode': 200,
+
+                'body': json.dumps("SDLC Data saved"), 
+
+                'headers': {
+
+                    'ContentType': 'application/json',
+
+                    'Access-Control-Allow-Origin': '*'
+
+                    }
+
+                    }       
+
+    except Exception as e:
+
+      response1 = {
+
+          "statusCode": 500,
+
+          "body": json.dumps(str(e)),
+
+          'headers': {
+
+                    'ContentType': 'application/json',
+
+                    'Access-Control-Allow-Origin': '*'
+
+                    }
+
+      }
+
+    return response1
+
+   
+
+# def update(event,sorted_items, lastUpdated_rfp_value):
+
+def update(event):
+
+    try:
+
+        reqbody=json.loads(event['body'])
+
+        rfp= reqbody['RfpNum']
+
+        response= filterByRfp(table,rfp) 
+
+        items = response.get('Items', [])
+
+        sorted_items=sorted(items,key=lambda x: x['id']['N'])
+
+        for sdlcListData, item in zip(reqbody["listdata"],sorted_items):
+
+                  lifecycle=sdlcListData['lifecycle']
+
+     
+
+                  primary_key_value = item['id']['N']  # Get the primary key value from the item
+
+                  client_dynamodb.update_item(
+
+                      TableName='Estimation_sdlc',
+
+                      Key={
+
+                          'id': {'N': primary_key_value},
+
+                        #   'rfp_no':{'N':str(lastUpdated_rfp_value) }
+
+                          'rfp_no':{'N':str(rfp) }
+
+                            # 'rfp_no':{'N':'85'}
+
+                      },
+
+                      UpdateExpression='SET #newAttr = :newValue',
+
+                      ExpressionAttributeNames={
+
+                          '#newAttr': 'lifecycle'
+
+                       
+
+                      },
+
+                      ExpressionAttributeValues={
+
+                          ':newValue': {'N':str(lifecycle)}
+
+                        
+
+                        #   ':newValue': {'N': str(reqbody)} 
+
+                      }    
+
+                  )
+
+           
+
+        response2 = {
+
+                    'statusCode': 200,
+
+                    'body': json.dumps("SDLC Data updated successfully"), 
+
+                    'headers': {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+                        }
+
+          }       
+
+    except Exception as e:
+
+      response2 = {
+
+          "statusCode": 500,
+
+          "body": json.dumps(str(e)),
+
+          "headers": {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+              
+
+          }
+
+      }
+
+
+
+    return response2
+
+    
+
+# def getSdlc(event,sorted_items):
+
+def getSdlc(event,table):
+
+    try:
+
+        rfp=event["queryStringParameters"]["RfpNum"]
+
+        response= filterByRfp(table,rfp) 
+
+        items = response.get('Items', [])
+
+        sorted_items=sorted(items,key=lambda x: x['id']['N'])
+
+        for item in sorted_items: 
+
+          if 'rfp_no'in item:
+
+              del item['rfp_no']
+
+        
+
+        response3= { 
+
+          'statusCode': 200,
+
+          'body': json.dumps(sorted_items),
+
+          'headers': {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+                    } 
+
+            }
+
+    except Exception as e:
+
+        response3= { 
+
+          'statusCode': 500,
+
+          'body': json.dumps(str(e)),
+
+          'headers': {
+
+                        'ContentType': 'application/json',
+
+                        'Access-Control-Allow-Origin': '*'
+
+                    } 
+
+      }
+
+    return response3   
+
+    
+
+    
+
+def lambda_handler(event, context):
+
+    hcontext=event['httpMethod']
+
+    # counter_response = counter_table.get_item(Key={'rfp_no': 100})
+
+    # counter_data = counter_response.get('Item', {})
+
+    # lastUpdated_rfp_value = counter_data.get('counter_value', None)
+
+    
+
+    # response= filterByRfp(table, lastUpdated_rfp_value) 
+
+    # items = response.get('Items', [])
+
+    # sorted_items=sorted(items,key=lambda x: x['id']['N'])
+
+   
+
+    if(hcontext=="POST"):
+
+    #   return postSdlc(event,lastUpdated_rfp_value)
+
+        return postSdlc(event)
+
+    elif(hcontext=='PUT'):
+
+        # return update(event,sorted_items,lastUpdated_rfp_value)
+
+        return update(event)
+
+    elif(hcontext=='GET'):
+
+        # return getSdlc(event,sorted_items)
+
+        return getSdlc(event,table)
